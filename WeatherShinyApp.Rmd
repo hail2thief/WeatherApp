@@ -1,0 +1,307 @@
+---
+title: "Simple Weather App"
+author: "Juan Tellez"
+output: html_document
+runtime: shiny
+---
+
+
+I was tasked with creating a simple app in Shiny that would provide weather information for a wide variety of cities. Weather data is collected via a web API from the website *Forecast.io*. The workhorse function here is `get_Weather` [reproduced below], which takes an API key, longitude and latitude for a selected city, and returns weather information that is later parsed and organized for visualization. 
+
+
+
+```{r, echo = TRUE, eval= FALSE}
+  get_Weather <- function(apiKey, lat, long)
+{
+  url = sprintf("https://api.forecast.io/forecast/%s/%s,%s", 
+                apiKey, lat, long) # cite: http://bit.ly/1NPplsf
+  
+  web = GET(url = url) # pull from website
+  web = content(web, as = "parsed")
+  
+  daily = web$daily # pull out daily forecasts
+  
+  output = lapply(daily$data, as.data.frame) %>% 
+    ldply(. , data.frame) #turn each list into data frame and then row-bind them
+  
+```
+
+
+
+In terms of the App itself, the user selects one of the cities on the list as well as a secondary weather characteristic they would like information about. The city is then geocoded using the `ggmap`
+package and longitude and latitude are extracted. These are then fed to the `get_Weather` function alongside the API key. The output is then used to generate the plots. 
+
+The app includes two conditional panels to generate either one plot or side-by-side plots according to whether the user prefers one kind of plot or another. 
+
+
+```{r, echo=FALSE, message=FALSE}
+  library(ggmap)
+  library(httr)
+  library(dplyr)
+  library(shiny)
+  library(gridExtra)
+  library(plyr)
+  library(data.table)
+  
+  # define cities
+  cities <- c("Bogota", 
+              "New York City",
+              'New Delhi',
+              'London',
+              'Paris', 
+              'Shanghai', 
+              'Lagos', 
+              'Istanbul',
+              'Tokyo',
+              'Moscow',
+              'Rio de Janeiro',
+              'Seoul',
+              'Cairo',
+              'Lima',
+              'Tehran',
+              'Baghdad', 
+              'Dhaka',
+              'Santiago',
+              'Alexandria',
+              'Cape Town',
+              'Berlin', 
+              'Kabul',
+              'Madrid',
+              'Buenos Aires',
+              'Chicago', 
+              'Miami', 
+              'Dublin', 
+              'Belfast')
+  
+  cities = sort(cities) # sort in alpha order
+  cities <- as.character(cities) # make sure all character vector
+  
+  apiKey = "b60f5443971c2de6116a5558d3b1f842" # define API key
+  
+  
+  # alternative weather options
+  
+  weather = c("Precipitation Intensity", 
+              "Max Precipitation Intensity",
+              "Probability of Precipitation", 
+              "Dew Point", "Humidity","Wind Speed",
+              "Wind Bearing", "Cloud Cover", "Pressure")
+  
+  # main panel of app
+  
+  mainPanel(
+    
+    
+    br(),
+    
+    selectInput("input_city", label = "City to Forecast:",
+                choices = cities, selected = 'NAIROBI'),
+    
+    checkboxInput("alternative", label = "More Weather Metrics", value = FALSE),
+    
+    conditionalPanel(
+      condition = "input.alternative == true", 
+      selectInput("alt_temp", label = "Alternative Weather Options:",
+                   choices = weather, selected = weather[1])
+    )
+    
+  
+  )
+  
+  # default panel (low and highs at each day)
+  conditionalPanel(
+    condition = "input.alternative == false", 
+    renderPlot({
+    # Set a theme for gg
+    theme_set(theme_minimal())
+    
+    # get Weather from Forecast.io
+    get_Weather <- function(apiKey, lat, long)
+  {
+    url = sprintf("https://api.forecast.io/forecast/%s/%s,%s", 
+                  apiKey, lat, long) # cite: http://bit.ly/1NPplsf
+    
+    web = GET(url = url) # pull from website
+    web = content(web, as = "parsed")
+    
+    daily = web$daily # pull out daily forecasts
+    
+    output = lapply(daily$data, as.data.frame) %>% 
+      ldply(., data.frame) #turn each list into data frame and then row-bind them
+    
+  #   # turn into datetime
+    output$time <- as.POSIXct(output$time, origin = "1970-01-01", tz = "UTC")
+    
+    output$temperatureMinTime <- as.POSIXct(output$temperatureMinTime,
+                                                origin = "1970-01-01", tz = "UTC")
+    output$temperatureMaxTime <- as.POSIXct(output$temperatureMaxTime,
+                                                origin = "1970-01-01", tz = "UTC")
+    output$apparentTemperatureMinTime <- as.POSIXct(output$apparentTemperatureMinTime,
+                                        origin = "1970-01-01", tz = "UTC")
+    output$apparentTemperatureMaxTime <- as.POSIXct(output$apparentTemperatureMaxTime,
+                                        origin = "1970-01-01", tz = "UTC")
+    
+    
+    
+    # Fix Names
+  weathervars = c("precipIntensity", 
+              "precipIntensityMax", 
+              "precipProbability", 
+              "dewPoint", 
+              "humidity", 
+              "windSpeed", 
+              "windBearing",
+              "cloudCover", 
+              "pressure")
+  
+  newlabels =  c("Precipitation Intensity", 
+              "Max Precipitation Intensity",
+              "Probability of Precipitation", 
+              "Dew Point", "Humidity","Wind Speed",
+              "Wind Bearing", "Cloud Cover", "Pressure")
+  
+  
+  output = data.table::setnames(output, old = weathervars, new = newlabels)
+    
+    
+     return(output)
+    }
+    
+    # pull long and lat for specified city
+    locations = geocode(input$input_city, source = 'google')
+    
+    # get weather
+    today = get_Weather(apiKey = apiKey, 
+                lon = locations$lon, 
+                lat = locations$lat)
+    
+    
+    # make the plot
+    
+    tmp = ggplot()
+    tmp = tmp + theme_minimal()
+    tmp = tmp + geom_line(data = today,
+                        aes(x=temperatureMinTime, 
+                            y=temperatureMin,
+                        color = "yellow"), size = 3) # stock color assignment
+    tmp = tmp + geom_line(data = today, 
+                        aes(x = temperatureMaxTime, 
+                            y = temperatureMax,
+                            color = "red"), size = 3) # stock color assignment
+    
+    tmp = tmp + labs(title = paste("Forecasted Temperature for", input$input_city, sep = " "), x = "", y = "")
+    
+    tmp = tmp + theme(legend.position = 'bottom')
+    tmp = tmp + scale_color_manual(name="Temperature Forecast:", 
+                                 values=c("#2171b5", "#bdd7e7"), 
+                                 labels = c("High Temp.","Low Temp."))
+    tmp = tmp + theme(plot.title = element_text(face = 'bold'))
+    
+    print(tmp)
+  
+  })
+  )
+    conditionalPanel(
+      condition = "input.alternative == true",
+      renderPlot({
+        
+        # Set a theme for gg
+    theme_set(theme_bw())
+    
+    # get Weather from Forecast.io
+    get_Weather <- function(apiKey, lat, long)
+  {
+    url = sprintf("https://api.forecast.io/forecast/%s/%s,%s", 
+                  apiKey, lat, long) # cite: http://bit.ly/1NPplsf
+    
+    web = GET(url = url) # pull from website
+    web = content(web, as = "parsed")
+    
+    daily = web$daily # pull out daily forecasts
+    
+    output = lapply(daily$data, as.data.frame) %>% 
+      ldply(. , data.frame) #turn each list into data frame and then row-bind them
+    
+  #   # turn into datetime
+    output$time <- as.POSIXct(output$time, origin = "1970-01-01", tz = "UTC")
+    
+    output$temperatureMinTime <- as.POSIXct(output$temperatureMinTime,
+                                                origin = "1970-01-01", tz = "UTC")
+    output$temperatureMaxTime <- as.POSIXct(output$temperatureMaxTime,
+                                                origin = "1970-01-01", tz = "UTC")
+    output$apparentTemperatureMinTime <- as.POSIXct(output$apparentTemperatureMinTime,
+                                        origin = "1970-01-01", tz = "UTC")
+    output$apparentTemperatureMaxTime <- as.POSIXct(output$apparentTemperatureMaxTime,
+                                        origin = "1970-01-01", tz = "UTC")
+    
+    
+    
+     # Fix Names
+  weathervars = c("precipIntensity", 
+              "precipIntensityMax", 
+              "precipProbability", 
+              "dewPoint", 
+              "humidity", 
+              "windSpeed", 
+              "windBearing",
+              "cloudCover", 
+              "pressure")
+  
+  newlabels =  c("Precipitation Intensity", 
+              "Max Precipitation Intensity",
+              "Probability of Precipitation", 
+              "Dew Point", "Humidity","Wind Speed",
+              "Wind Bearing", "Cloud Cover", "Pressure")
+  
+  
+  output = data.table::setnames(output, old = weathervars, new = newlabels)
+    
+    
+     return(output)
+    }
+    
+    # pull long and lat for specified city
+    locations = geocode(input$input_city, source = 'google')
+    
+    # get weather
+    today = get_Weather(apiKey = apiKey, 
+                lon = locations$lon, 
+                lat = locations$lat)
+    
+    
+    # make the plot
+    
+    tmp = ggplot()
+    tmp = tmp + theme_minimal()
+    tmp = tmp + geom_line(data = today,
+                        aes(x=temperatureMinTime, 
+                            y=temperatureMin,
+                        color = "yellow"), size = 3)
+    tmp = tmp + geom_line(data = today, 
+                        aes(x = temperatureMaxTime, 
+                            y = temperatureMax,
+                            color = "red"), size = 3)
+    tmp = tmp + labs(title = paste("Forecasted Temperature for", input$input_city, sep = " "), x = "", y = "")
+    tmp = tmp + theme(legend.position = 'bottom')
+    tmp = tmp + scale_color_manual(name="Temperature Forecast:", 
+                                 values=c("#2171b5", "#bdd7e7"), 
+                                 labels = c("High Temp.", "Low Temp."))
+    tmp = tmp + theme(plot.title = element_text(face = 'bold'))
+        
+    tmp2 = ggplot()
+    tmp2 = tmp2 + theme_minimal()
+    tmp2 = tmp2 + geom_line(data = today, 
+                            aes_string(x = "time", 
+                                y = paste0("`", input$alt_temp, "`")), 
+                            color = "#6baed6", size = 3)
+    tmp2 = tmp2 + labs(title = paste("Forecasted", input$alt_temp, "in", 
+                                     input$input_city, sep = " "),
+                       x = "", y = "")
+    tmp2 = tmp2 + theme(plot.title = element_text(face = 'bold'))
+    grid.arrange(tmp, tmp2, ncol = 2)
+      })
+    )
+  
+
+```
+
